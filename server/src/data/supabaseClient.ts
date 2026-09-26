@@ -17,7 +17,18 @@ const tables: Record<string, any[]> = {
 const storageStore = new Map<string, { buffer: Buffer; contentType: string }>();
 let ticketCounter = 1;
 
-function parseOrFilter(filterStr: string): Array<(row: any) => boolean> {
+function resolveColValue(row: any, col: string, tableName: string): any {
+  if (col.includes('.')) {
+    const [relation, field] = col.split('.');
+    if (tableName === 'ticket_messages' && relation === 'tickets') {
+      const ticket = tables.tickets?.find((t: any) => t.id === row.ticket_id);
+      return ticket ? ticket[field] : undefined;
+    }
+  }
+  return row[col];
+}
+
+function parseOrFilter(filterStr: string, tableName: string): Array<(row: any) => boolean> {
   const parts: string[] = [];
   let current = '';
   let depth = 0;
@@ -37,13 +48,13 @@ function parseOrFilter(filterStr: string): Array<(row: any) => boolean> {
     const eqMatch = part.match(/^([^.]+)\.eq\.(.*)$/);
     if (eqMatch) {
       const [, col, val] = eqMatch;
-      return (row: any) => String(row[col] ?? '') === val;
+      return (row: any) => String(resolveColValue(row, col, tableName) ?? '') === val;
     }
     const inMatch = part.match(/^([^.]+)\.in\.\((.*)\)$/);
     if (inMatch) {
       const [, col, list] = inMatch;
       const vals = list.split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, ''));
-      return (row: any) => vals.includes(String(row[col] ?? ''));
+      return (row: any) => vals.includes(String(resolveColValue(row, col, tableName) ?? ''));
     }
     return () => true;
   });
@@ -58,6 +69,7 @@ function createMockSupabaseClient(): AnySupabaseClient {
 
       let filters: Array<(row: any) => boolean> = [];
       let sortFn: ((a: any, b: any) => number) | undefined;
+      let limitCount: number | undefined;
       let action: 'select' | 'insert' | 'update' | 'delete' = 'select';
       let insertRows: any[] = [];
       let updatePatch: any = {};
@@ -151,6 +163,10 @@ function createMockSupabaseClient(): AnySupabaseClient {
           filtered = [...filtered].sort(sortFn);
         }
 
+        if (limitCount !== undefined) {
+          filtered = filtered.slice(0, limitCount);
+        }
+
         if (singleMode === 'single') {
           if (filtered.length === 0) {
             return { data: null, error: { code: 'PGRST116', message: 'Row not found' } };
@@ -173,38 +189,48 @@ function createMockSupabaseClient(): AnySupabaseClient {
           return builder;
         },
         eq(col: string, val: any) {
-          filters.push((row: any) => String(row[col] ?? '') === String(val ?? ''));
+          filters.push((row: any) => String(resolveColValue(row, col, tableName) ?? '') === String(val ?? ''));
+          return builder;
+        },
+        neq(col: string, val: any) {
+          filters.push((row: any) => String(resolveColValue(row, col, tableName) ?? '') !== String(val ?? ''));
+          return builder;
+        },
+        limit(count: number) {
+          limitCount = count;
           return builder;
         },
         ilike(col: string, val: string) {
-          filters.push((row: any) => String(row[col] ?? '').toLowerCase() === String(val ?? '').toLowerCase());
+          filters.push((row: any) => String(resolveColValue(row, col, tableName) ?? '').toLowerCase() === String(val ?? '').toLowerCase());
           return builder;
         },
         in(col: string, vals: any[]) {
           const stringVals = Array.isArray(vals) ? vals.map((v) => String(v)) : [];
-          filters.push((row: any) => stringVals.includes(String(row[col] ?? '')));
+          filters.push((row: any) => stringVals.includes(String(resolveColValue(row, col, tableName) ?? '')));
           return builder;
         },
         or(filterStr: string) {
-          const subfilters = parseOrFilter(filterStr);
+          const subfilters = parseOrFilter(filterStr, tableName);
           filters.push((row: any) => subfilters.some((fn) => fn(row)));
           return builder;
         },
         not(col: string, op: string, val: any) {
+          const rowVal = (row: any) => resolveColValue(row, col, tableName);
           if (op === 'is' && val === null) {
-            filters.push((row: any) => row[col] !== null && row[col] !== undefined);
+            filters.push((row: any) => rowVal(row) !== null && rowVal(row) !== undefined);
           } else if (op === 'eq') {
-            filters.push((row: any) => String(row[col] ?? '') !== String(val ?? ''));
+            filters.push((row: any) => String(rowVal(row) ?? '') !== String(val ?? ''));
           } else {
-            filters.push((row: any) => row[col] !== val);
+            filters.push((row: any) => rowVal(row) !== val);
           }
           return builder;
         },
         is(col: string, val: any) {
+          const rowVal = (row: any) => resolveColValue(row, col, tableName);
           if (val === null) {
-            filters.push((row: any) => row[col] === null || row[col] === undefined);
+            filters.push((row: any) => rowVal(row) === null || rowVal(row) === undefined);
           } else {
-            filters.push((row: any) => row[col] === val);
+            filters.push((row: any) => rowVal(row) === val);
           }
           return builder;
         },

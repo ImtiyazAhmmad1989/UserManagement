@@ -42,4 +42,13 @@ export async function seedIfNeeded(): Promise<void> {
       await supabase.from('users').insert(seedUsers);
     }
   }
+
+  try {
+    const { data: buckets } = await supabase.storage.listBuckets();
+    if (buckets && !buckets.some((b) => b.name === 'attachments')) {
+      await supabase.storage.createBucket('attachments', { public: false });
+    }
+  } catch {
+    // ignore storage bucket initialization errors
+  }
 }

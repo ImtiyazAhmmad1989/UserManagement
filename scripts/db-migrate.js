@@ -36,9 +36,9 @@ function loadDotEnv(filePath) {
 async function main() {
   loadDotEnv(path.resolve(__dirname, '../.env'));
 
-  if (!process.env.DATABASE_URL) {
-    console.error('DATABASE_URL is not set (expected in .env at the repo root). See README\'s "Connecting to Supabase" section.');
-    process.exit(1);
+  if (!process.env.DATABASE_URL || isPlaceholder(process.env.DATABASE_URL)) {
+    console.log('[AI Studio] DATABASE_URL is not set or placeholder — skipping schema migration.');
+    return;
   }
 
   const migrationsDir = path.resolve(__dirname, '../supabase/migrations');
